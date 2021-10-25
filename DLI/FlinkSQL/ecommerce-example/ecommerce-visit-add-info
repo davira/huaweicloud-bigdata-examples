@@ -1,0 +1,241 @@
+/**    
+    STREAM from Kafka
+	session_uuid, transaction_uuid, timestamp, idUser, product_identifier, time_spent
+	573d89a6-4581-47e5-97c4-62445010a62d,640c1298-29cd-4c97-8e58-bd18113d3501,1630313152,648404,B005DTL958,14
+
+**/
+
+CREATE SOURCE STREAM source_ecommerce_visit (
+  session_uuid STRING,
+  transaction_uuid STRING,
+  my_timestamp INT,
+  idUser INT,
+  product_identifier STRING,
+  time_spent DOUBLE
+) WITH (
+  type = "kafka",
+  kafka_bootstrap_servers = "{{kafka_brokers}}",
+  kafka_group_id = "source_ecommerce-visit-add-info-consumer_group",
+  kafka_topic = "ecommerce-viewed-topic",
+  encode = "csv"
+);
+
+
+/**    
+	############# DIMENSION TABLE #############        
+	#### Category ####
+		
+	Cache: 1 hours (60 sec * 60 min * 1000 ms)
+**/
+
+CREATE TABLE dimension_ecommerce_customer_info (
+	idCustomer INT,
+	gender STRING,
+	age INT,
+	country STRING,
+	city STRING
+) WITH (
+	type = "rds",
+	username = "root",
+	password = "{{mysql_password}}",
+	db_url = "mysql://192.168.100.100:3306/{{ecommerce_schema}}",
+-- 	cache_time = "3600000",
+	table_name = "customer_info",
+	db_columns = "idCustomer,gender,age,country,city"
+);
+
+CREATE TABLE dimension_ecommerce_product (
+	idProduct INT,
+	product_identifier STRING,
+	title STRING,
+	brand STRING,
+	price DOUBLE
+) WITH (
+	type = "rds",
+	username = "root",
+	password = "{{mysql_password}}",
+	db_url = "mysql://192.168.100.100:3306/{{ecommerce_schema}}",
+-- 	cache_time = "3600000",
+	table_name = "product",
+	db_columns = "idProduct,product_identifier,title,brand,price"
+);
+
+CREATE TABLE dimension_ecommerce_category (
+	idCategory INT,
+	category STRING,
+	subcategory STRING,
+	product_identifier STRING
+) WITH (
+	type = "rds",
+	username = "root",
+	password = "{{mysql_password}}",
+	db_url = "mysql://192.168.100.100:3306/{{ecommerce_schema}}",
+	-- cache_time = "3600000",
+	table_name = "category"
+);
+
+
+/**    
+	############# TEMPORAL TABLES #############        
+	
+**/
+
+
+CREATE TEMP STREAM temp_ecommerce_visit_product_customer_info (
+	session_uuid STRING,
+	transaction_uuid STRING,
+	my_timestamp INT,
+	time_spent DOUBLE,
+	idProduct INT,
+	product_identifier STRING,
+	title STRING,
+	brand STRING,
+	price DOUBLE,
+	idCustomer INT,
+	gender STRING,
+	age INT,
+	age_category STRING,
+	country STRING,
+	city STRING
+);
+
+
+/**    
+    SINK in RDS MySQL
+	
+**/
+
+CREATE SINK STREAM sink_ecommerce_visit_product_customer_info_category (
+	session_uuid STRING,
+	transaction_uuid STRING,
+	my_timestamp INT,
+	time_spent DOUBLE,
+	idProduct INT,
+	product_identifier STRING,
+	title STRING,
+	brand STRING,
+	price DOUBLE,
+	idUser INT,
+	gender STRING,
+	age INT,
+	age_category STRING,
+	country STRING,
+	city STRING,
+	idCategory INT,
+	category STRING
+) WITH (
+	type = "kafka",
+	kafka_bootstrap_servers = "{{kafka_brokers}}",
+	kafka_group_id = "sink_ecommerce_visit_product_customer_info_category-consumer_group",
+	kafka_topic = "ecommerce-visit-rich-topic",
+	encode = "json"
+);
+
+
+CREATE SINK STREAM sink_ecommerce_visit_product_customer_info_all_category (
+	session_uuid STRING,
+	transaction_uuid STRING,
+	my_timestamp INT,
+	time_spent DOUBLE,
+	idProduct INT,
+	product_identifier STRING,
+	title STRING,
+	brand STRING,
+	price DOUBLE,
+	idUser INT,
+	gender STRING,
+	age INT,
+	age_category STRING,
+	country STRING,
+	city STRING,
+	idCategory INT,
+	category STRING,
+	subcategory STRING
+) WITH (
+	type = "kafka",
+	kafka_bootstrap_servers = "{{kafka_brokers}}",
+	kafka_group_id = "sink_ecommerce_visit_product_customer_info_category-consumer_group",
+	kafka_topic = "ecommerce-visit-all-category-rich-topic",
+	encode = "json"
+);
+
+
+/**    
+    OPERATIONS
+	
+**/
+
+INSERT INTO temp_ecommerce_visit_product_customer_info 
+SELECT 
+	visit.session_uuid,
+	visit.transaction_uuid,
+	visit.my_timestamp,
+	visit.time_spent,
+	prod.idProduct,
+	visit.product_identifier,
+	prod.title,
+	prod.brand,
+	prod.price,
+	ci.idCustomer,
+	ci.gender,
+	ci.age, 
+	CASE
+    WHEN ci.age < 18 THEN 'Kids'
+    WHEN ci.age >= 18 AND ci.age < 30 THEN 'Youth'
+    WHEN ci.age >= 30 AND ci.age < 45 THEN 'Mid age'
+    WHEN ci.age >= 45 AND ci.age < 65 THEN 'Old age'
+    ELSE 'Problems'
+    END AS age_category,
+	ci.country,
+	ci.city
+FROM source_ecommerce_visit visit 
+LEFT JOIN dimension_ecommerce_product prod ON visit.product_identifier = prod.product_identifier
+LEFT JOIN dimension_ecommerce_customer_info ci ON visit.idUser = ci.idCustomer;
+
+
+INSERT INTO sink_ecommerce_visit_product_customer_info_category 
+SELECT 
+	temp_visit.session_uuid,
+	temp_visit.transaction_uuid,
+	temp_visit.my_timestamp,
+	temp_visit.time_spent,
+	temp_visit.idProduct,
+	temp_visit.product_identifier,
+	temp_visit.title,
+	temp_visit.brand,
+	temp_visit.price,
+	temp_visit.idCustomer,
+	temp_visit.gender,
+	temp_visit.age, 
+	temp_visit.age_category,
+	temp_visit.country,
+	temp_visit.city,
+	cat.idCategory,
+	cat.category
+FROM temp_ecommerce_visit_product_customer_info temp_visit 
+LEFT JOIN dimension_ecommerce_category cat ON temp_visit.product_identifier = cat.product_identifier;
+
+
+INSERT INTO sink_ecommerce_visit_product_customer_info_all_category 
+SELECT 
+	temp_visit.session_uuid,
+	temp_visit.transaction_uuid,
+	temp_visit.my_timestamp,
+	temp_visit.time_spent,
+	temp_visit.idProduct,
+	temp_visit.product_identifier,
+	temp_visit.title,
+	temp_visit.brand,
+	temp_visit.price,
+	temp_visit.idCustomer,
+	temp_visit.gender,
+	temp_visit.age, 
+	temp_visit.age_category,
+	temp_visit.country,
+	temp_visit.city,
+	cat.idCategory,
+	cat.category,
+	cat.subcategory
+FROM temp_ecommerce_visit_product_customer_info temp_visit 
+LEFT JOIN dimension_ecommerce_category cat ON temp_visit.product_identifier = cat.product_identifier;
+
