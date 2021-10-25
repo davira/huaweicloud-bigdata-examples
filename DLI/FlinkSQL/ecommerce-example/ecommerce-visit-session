@@ -1,0 +1,100 @@
+/**    
+    STREAM from Kafka  
+	
+    5953f91c-3a41-4858-822f-470615503c9f,62337b53-9eca-474a-bc5c-d105ae2b3970,1628504595,3684368,B00002SWQS,20
+	{"session_uuid":"f8f18fcf-cf27-4eae-8a18-0dc81111b1e7",
+	"transaction_uuid":"2f6851e2-077e-4a6d-96fd-c9543eb3f40f",
+	"my_timestamp":1630313613,
+	"time_spent":10.0,
+	"idProduct":1434623,
+	"product_identifier":"B00005BYHS",
+	"title":"LEGO Harry Potter: The Final Challenge (4702)",
+	"brand":"Harry Potter",
+	"price":65.19,
+	"idUser":583438,
+	"gender":"female",
+	"age":45,
+	"age_category":"Old age ",
+	"country":"China",
+	"city":"Lu’an",
+	"idCategory":4537514,
+	"category":"Toys & Games"
+	}
+
+
+**/
+
+CREATE SOURCE STREAM source_ecommerce_viewed (
+	session_uuid STRING,  -- To be remove
+	transaction_uuid STRING,  -- To be remove
+	my_timestamp INT,
+	time_spent DOUBLE,
+	idProduct INT,
+	product_identifier STRING,
+	title STRING,
+	brand STRING,
+	price DOUBLE,
+	idUser INT,
+	gender STRING,
+	age INT,
+	age_category STRING,
+	country STRING,
+	city STRING,
+	idCategory INT,
+	category STRING
+) WITH (
+	type = "kafka",
+	kafka_bootstrap_servers = "{{kafka_brokers}}",
+	kafka_group_id = "ecommerce-customer-session-consumer_group",
+	kafka_topic = "ecommerce-visit-rich-topic",
+	encode = "json"
+)TIMESTAMP BY proctime.proctime;
+
+-- TIMESTAMP BY my_timestamp.rowtime
+-- SET WATERMARK (RANGE interval 10 second, interval 20 second);
+
+
+
+-- Store into RDS
+
+CREATE SINK STREAM sink_ecommerce_customer_session (
+	idVisitSession INT,
+	session_type STRING,
+	session_start TIMESTAMP,
+	session_end TIMESTAMP,
+	session_start_date STRING,
+	idUser INT,
+	unique_products INT,
+	total_time_spent DOUBLE,
+	unique_products_array STRING,
+	time_spent_array STRING
+)
+  WITH (
+	type = "rds",
+	username = "root",
+	password = "{{mysql_password}}",
+	db_url = "mysql://192.168.100.100:3306/{{ecommerce_schema}}",
+	table_name = "visit_session"
+);
+
+
+-- Window per minute, aggrupating by product_identifier
+INSERT INTO sink_ecommerce_customer_session
+SELECT 
+	NULL as idVisitSession,
+	'minute' as session_type,
+	SESSION_START(proctime, INTERVAL '60' SECOND) AS session_start,
+    SESSION_END(proctime, INTERVAL '60' SECOND) AS session_end,
+	cast(cast(SESSION_START(proctime, INTERVAL '60' SECOND) as date) as VARCHAR) as window_start_date,
+	idUser,
+	COUNT(DISTINCT(product_identifier)) as unique_products,
+	SUM(time_spent) as total_time_spent,
+	NULL as unique_products_array,
+	NULL as time_spent_array
+--	CONCAT_AGG(product_identifier) as unique_products_array,
+--	LISTAGG(time_spent) as time_spent_array
+FROM 
+  source_ecommerce_viewed
+  GROUP BY idUser, SESSION(proctime, INTERVAL '60' SECOND);
+
+
