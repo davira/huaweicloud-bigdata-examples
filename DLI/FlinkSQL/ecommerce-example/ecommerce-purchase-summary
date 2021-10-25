@@ -1,0 +1,131 @@
+/**    
+    STREAM from Kafka
+	session_uuid, transaction_uuid, timestamp, idUser, product_identifier, quantity, time_spent
+	{"session_uuid":"c52e2cc3-2cfa-4162-9fdc-92f0ed6613e6",
+	"transaction_uuid":"96bb02e9-91a0-431e-aa87-6330c327d040",
+	"my_timestamp":1630134097,
+	"quantity":2,
+	"time_spent":30.0,
+	"idProduct":4496235,
+	"product_identifier":"B009TU5K1Q",
+	"title":"","brand":"",
+	"price":0.99,
+	"idUser":654389,
+	"gender":"female",
+	"age":30,
+	"age_category":"Mid age",
+	"country":"Indonesia",
+	"city":"Palopo",
+	"idCategory":14220691,
+	"category":"Books"}
+
+
+**/
+
+CREATE SOURCE STREAM source_ecommerce_purchase_rich (
+	session_uuid STRING,
+	transaction_uuid STRING,
+	my_timestamp INT,
+	quantity INT,
+	time_spent DOUBLE,
+	idProduct INT,
+	product_identifier STRING,
+	title STRING,
+	brand STRING,
+	price DOUBLE,
+	idUser INT,
+	gender STRING,
+	age INT,
+	age_category STRING,
+	country STRING,
+	city STRING,
+	idCategory INT,
+	category STRING
+) WITH (
+	type = "kafka",
+	kafka_bootstrap_servers = "{{kafka_brokers}}",
+	kafka_group_id = "source_ecommerce_purchase_summary-consumer_group",
+	kafka_topic = "ecommerce-bought-rich-topic",
+	encode = "json"
+)
+TIMESTAMP BY proctime.proctime;
+
+
+/**    
+	############# TEMPORAL TABLES #############        
+	
+**/
+
+-- CREATE TEMP STREAM temp_tumble_brand_window (
+-- 	idTopProducts INT,
+-- 	top_type STRING,
+-- 	top_value STRING,
+-- 	window_type STRING,
+-- 	window_start TIMESTAMP,
+-- 	window_end TIMESTAMP,
+-- 	window_start_date STRING,
+-- 	country STRING,
+-- 	num_purchases INT,
+-- 	quantity_total INT
+-- );
+
+
+/**    
+    SINK in RDS MySQL
+	
+**/
+
+CREATE SINK STREAM sink_purchase_summary (
+	idPurchaseSummary INT,
+	window_type STRING,
+	window_start TIMESTAMP,
+	window_end TIMESTAMP,
+	window_start_date STRING,
+	category STRING,
+	country STRING,
+	city STRING,
+	age_category STRING,
+	gender STRING,
+	unique_users INT,
+	num_purchases INT,
+	unique_products INT,
+	total_products INT,
+	total_price DOUBLE
+) WITH (
+	type = "rds",
+	username = "root",
+	password = "{{mysql_password}}",
+	db_url = "mysql://192.168.100.100:3306/{{ecommerce_schema}}",
+	table_name = "purchase_summary"
+);
+
+
+
+/**    
+    OPERATIONS
+	
+**/
+
+-- Window per minute, aggrupating by product_identifier per country
+-- HOP - HOP(ts, refresh, window_size)
+INSERT INTO sink_purchase_summary
+SELECT 
+	NULL as idPurchaseSummary,
+	'minute' as window_type,
+	HOP_START(proctime, INTERVAL '10' SECOND, INTERVAL '60' SECOND) as window_start,
+	HOP_END(proctime, INTERVAL '10' SECOND, INTERVAL '60' SECOND) as window_end,
+	cast(cast(HOP_START(proctime, INTERVAL '10' SECOND, INTERVAL '60' SECOND) as date) as VARCHAR) as window_start_date,
+	category,
+	country,
+	'all' as city,
+	age_category,
+	gender,
+	COUNT(DISTINCT(idUser)) as unique_users,
+	COUNT(DISTINCT(session_uuid)) as num_purchases,
+	COUNT(DISTINCT(product_identifier)) as unique_products,
+	SUM(quantity) as total_products,
+	SUM(quantity * price) as total_price
+FROM 
+	source_ecommerce_purchase_rich
+	GROUP BY HOP(proctime, INTERVAL '10' SECOND, INTERVAL '60' SECOND), category, country, age_category, gender;
+	
