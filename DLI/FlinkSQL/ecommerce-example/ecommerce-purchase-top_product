@@ -1,0 +1,258 @@
+/**    
+    STREAM from Kafka
+	session_uuid, transaction_uuid, timestamp, idUser, product_identifier, quantity, time_spent
+
+**/
+
+CREATE SOURCE STREAM source_ecommerce_purchase_rich (
+	session_uuid STRING,
+	transaction_uuid STRING,
+	my_timestamp INT,
+	quantity INT,
+	time_spent DOUBLE,
+	idProduct INT,
+	product_identifier STRING,
+	title STRING,
+	brand STRING,
+	price DOUBLE,
+	idUser INT,
+	gender STRING,
+	age INT,
+	age_category STRING,
+	country STRING,
+	city STRING,
+	idCategory INT,
+	category STRING
+) WITH (
+	type = "kafka",
+	kafka_bootstrap_servers = "{{kafka_brokers}}",
+	kafka_group_id = "source_ecommerce_purchase_top_product-consumer_group",
+	kafka_topic = "ecommerce-bought-rich-topic",
+	encode = "json"
+)
+TIMESTAMP BY proctime.proctime;
+
+
+/**    
+	############# TEMPORAL TABLES #############        
+	
+**/
+
+-- CREATE TEMP STREAM temp_tumble_brand_window (
+-- 	idTopProducts INT,
+-- 	top_type STRING,
+-- 	top_value STRING,
+-- 	window_type STRING,
+-- 	window_start TIMESTAMP,
+-- 	window_end TIMESTAMP,
+-- 	window_start_date STRING,
+-- 	country STRING,
+-- 	num_purchases INT,
+-- 	quantity_total INT
+-- );
+
+
+/**    
+    SINK in RDS MySQL
+	
+**/
+
+CREATE SINK STREAM sink_top_product (
+	idTopProducts INT,
+	top_type STRING,
+	top_value STRING,
+	window_type STRING,
+	window_start TIMESTAMP,
+	window_end TIMESTAMP,
+	window_start_date STRING,
+	country STRING,
+	unique_users INT,
+	num_purchases INT,
+	unique_products INT,
+	total_products INT,
+	total_price DOUBLE
+) WITH (
+	type = "rds",
+	username = "root",
+	password = "{{mysql_password}}",
+	db_url = "mysql://192.168.100.100:3306/{{ecommerce_schema}}",
+	table_name = "top_product"
+);
+
+
+
+/**    
+    OPERATIONS
+	
+**/
+
+-- Window per minute, aggrupating by product_identifier per country
+INSERT INTO sink_top_product
+SELECT 
+	NULL as idTopProducts,
+	'product' as top_type,
+	product_identifier as top_value,
+	'minute' as window_type,
+	TUMBLE_START(proctime, INTERVAL '60' SECOND) as window_start,
+	TUMBLE_END(proctime, INTERVAL '60' SECOND) as window_end,
+	cast(cast(TUMBLE_START(proctime, INTERVAL '60' SECOND) as date) as VARCHAR) as window_start_date,
+	country,
+	COUNT(DISTINCT(idUser)) as unique_users,
+	COUNT(DISTINCT(session_uuid)) as num_purchases,
+	COUNT(DISTINCT(product_identifier)) as unique_products,
+	SUM(quantity) as total_products,
+	SUM(quantity * price) as total_price
+FROM 
+	source_ecommerce_purchase_rich
+	GROUP BY TUMBLE(proctime, INTERVAL '60' SECOND), country, product_identifier;
+	
+	
+-- Window per minute, aggrupating by product_identifier global
+INSERT INTO sink_top_product
+SELECT 
+	NULL as idTopProducts,
+	'product' as top_type,
+	product_identifier as top_value,
+	'minute' as window_type,
+	TUMBLE_START(proctime, INTERVAL '60' SECOND) as window_start,
+	TUMBLE_END(proctime, INTERVAL '60' SECOND) as window_end,
+	cast(cast(TUMBLE_START(proctime, INTERVAL '60' SECOND) as date) as VARCHAR) as window_start_date,
+	'global' as country,
+	COUNT(DISTINCT(idUser)) as unique_users,
+	COUNT(DISTINCT(session_uuid)) as num_purchases,
+	COUNT(DISTINCT(product_identifier)) as unique_products,
+	SUM(quantity) as total_products,
+	SUM(quantity * price) as total_price
+FROM 
+	source_ecommerce_purchase_rich
+	GROUP BY TUMBLE(proctime, INTERVAL '60' SECOND), product_identifier;
+	
+	
+-- Window per minute, aggrupating by brand
+INSERT INTO sink_top_product
+SELECT 
+	NULL as idTopProducts,
+	'brand' as top_type,
+	brand as top_value,
+	'minute' as window_type,
+	TUMBLE_START(proctime, INTERVAL '60' SECOND) as window_start,
+	TUMBLE_END(proctime, INTERVAL '60' SECOND) as window_end,
+	cast(cast(TUMBLE_START(proctime, INTERVAL '60' SECOND) as date) as VARCHAR) as window_start_date,
+	country,
+	COUNT(DISTINCT(idUser)) as unique_users,
+	COUNT(DISTINCT(session_uuid)) as num_purchases,
+	COUNT(DISTINCT(product_identifier)) as unique_products,
+	SUM(quantity) as total_products,
+	SUM(quantity * price) as total_price
+FROM 
+	source_ecommerce_purchase_rich
+	WHERE brand IS NOT NULL AND brand <> ''
+	GROUP BY TUMBLE(proctime, INTERVAL '60' SECOND), country, brand;
+
+
+-- Window per minute, aggrupating by gender
+INSERT INTO sink_top_product
+SELECT 
+	NULL as idTopProducts,
+	'gender' as top_type,
+	gender as top_value,
+	'minute' as window_type,
+	TUMBLE_START(proctime, INTERVAL '60' SECOND) as window_start,
+	TUMBLE_END(proctime, INTERVAL '60' SECOND) as window_end,
+	cast(cast(TUMBLE_START(proctime, INTERVAL '60' SECOND) as date) as VARCHAR) as window_start_date,
+	country,
+	COUNT(DISTINCT(idUser)) as unique_users,
+	COUNT(DISTINCT(session_uuid)) as num_purchases,
+	COUNT(DISTINCT(product_identifier)) as unique_products,
+	SUM(quantity) as total_products,
+	SUM(quantity * price) as total_price
+FROM 
+	source_ecommerce_purchase_rich
+	GROUP BY TUMBLE(proctime, INTERVAL '60' SECOND), country, gender;
+
+
+-- Window per minute, aggrupating by country
+INSERT INTO sink_top_product
+SELECT 
+	NULL as idTopProducts,
+	'country' as top_type,
+	country as top_value,
+	'minute' as window_type,
+	TUMBLE_START(proctime, INTERVAL '60' SECOND) as window_start,
+	TUMBLE_END(proctime, INTERVAL '60' SECOND) as window_end,
+	cast(cast(TUMBLE_START(proctime, INTERVAL '60' SECOND) as date) as VARCHAR) as window_start_date,
+	country,
+	COUNT(DISTINCT(idUser)) as unique_users,
+	COUNT(DISTINCT(session_uuid)) as num_purchases,
+	COUNT(DISTINCT(product_identifier)) as unique_products,
+	SUM(quantity) as total_products,
+	SUM(quantity * price) as total_price
+FROM 
+	source_ecommerce_purchase_rich
+	GROUP BY TUMBLE(proctime, INTERVAL '60' SECOND), country;
+
+
+-- Window per minute, aggrupating by city
+INSERT INTO sink_top_product
+SELECT 
+	NULL as idTopProducts,
+	'city' as top_type,
+	city as top_value,
+	'minute' as window_type,
+	TUMBLE_START(proctime, INTERVAL '60' SECOND) as window_start,
+	TUMBLE_END(proctime, INTERVAL '60' SECOND) as window_end,
+	cast(cast(TUMBLE_START(proctime, INTERVAL '60' SECOND) as date) as VARCHAR) as window_start_date,
+	country,
+	COUNT(DISTINCT(idUser)) as unique_users,
+	COUNT(DISTINCT(session_uuid)) as num_purchases,
+	COUNT(DISTINCT(product_identifier)) as unique_products,
+	SUM(quantity) as total_products,
+	SUM(quantity * price) as total_price
+FROM 
+	source_ecommerce_purchase_rich
+	GROUP BY TUMBLE(proctime, INTERVAL '60' SECOND), country, city;
+
+
+-- Window per minute, aggrupating by age_category
+INSERT INTO sink_top_product
+SELECT 
+	NULL as idTopProducts,
+	'age_category' as top_type,
+	age_category as top_value,
+	'minute' as window_type,
+	TUMBLE_START(proctime, INTERVAL '60' SECOND) as window_start,
+	TUMBLE_END(proctime, INTERVAL '60' SECOND) as window_end,
+	cast(cast(TUMBLE_START(proctime, INTERVAL '60' SECOND) as date) as VARCHAR) as window_start_date,
+	country,
+	COUNT(DISTINCT(idUser)) as unique_users,
+	COUNT(DISTINCT(session_uuid)) as num_purchases,
+	COUNT(DISTINCT(product_identifier)) as unique_products,
+	SUM(quantity) as total_products,
+	SUM(quantity * price) as total_price
+FROM 
+	source_ecommerce_purchase_rich
+	GROUP BY TUMBLE(proctime, INTERVAL '60' SECOND), country, age_category;
+
+
+
+-- Window per minute, aggrupating by category
+INSERT INTO sink_top_product
+SELECT 
+	NULL as idTopProducts,
+	'category' as top_type,
+	category as top_value,
+	'minute' as window_type,
+	TUMBLE_START(proctime, INTERVAL '60' SECOND) as window_start,
+	TUMBLE_END(proctime, INTERVAL '60' SECOND) as window_end,
+	cast(cast(TUMBLE_START(proctime, INTERVAL '60' SECOND) as date) as VARCHAR) as window_start_date,
+	country,
+	COUNT(DISTINCT(idUser)) as unique_users,
+	COUNT(DISTINCT(session_uuid)) as num_purchases,
+	COUNT(DISTINCT(product_identifier)) as unique_products,
+	SUM(quantity) as total_products,
+	SUM(quantity * price) as total_price
+FROM 
+	source_ecommerce_purchase_rich
+	GROUP BY TUMBLE(proctime, INTERVAL '60' SECOND), country, category;
+
+
