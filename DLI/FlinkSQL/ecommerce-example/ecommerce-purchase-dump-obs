@@ -63,7 +63,7 @@ CREATE SINK STREAM sink_source_ecommerce_purchase_rich_obs (
     region =  "ap-southeast-3",
     field_delimiter = ",",
     row_delimiter = "\n",
-    obs_dir = "democenter/landing_zone/ecommerce/kafka_dump/sink_ecommerce_purchase_product_customer_info_category_obs",
+    obs_dir = "{{obs_bucket}}/{{obs_ecommerce_root_path}}/sink_ecommerce_purchase_product_customer_info_category_obs",
     file_prefix = "viewed_products",
     rolling_size = "10m",
     ROLLING_INTERVAL = "yyyy/MM/dd/HH"
