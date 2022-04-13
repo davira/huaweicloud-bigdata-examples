@@ -4,7 +4,10 @@
 	@Author: David
 	@Date: 20220412
 
-	For more details, please check: https://support.huaweicloud.com/intl/en-us/devg-dws/dws_04_0062.html
+	For more details, please check: 
+	https://support.huaweicloud.com/intl/en-us/devg-dws/dws_04_0062.html
+	https://support.huaweicloud.com/intl/en-us/sqlreference-dws/dws_06_0064.html
+
 */
 
 -- Set role as DBadmin
@@ -28,7 +31,6 @@ CREATE ROLE penny PASSWORD 'Gauss@123';
 
 -- Allow new roles with all privilages on new schema data_masking
 GRANT ALL PRIVILEGES ON SCHEMA data_masking TO david, yago, penny;
-
 
 
 -- Set role to David
@@ -118,20 +120,38 @@ SET ROLE penny PASSWORD 'Gauss@123';
 SELECT * FROM employee;
 
 
-
 -- Modify the data masking policy.
 SET ROLE david PASSWORD 'Gauss@123';
 
 
--- Query all data masking policies
+-- Query redaction_policies and redaction_columns to view details about the current redaction policy mask_emp
 SELECT * FROM redaction_policies;
-
--- Query all data masking columns
 SELECT object_name, column_name, function_info FROM redaction_columns;
 
+
+
+
+-- Modify the table, add a text field, and create masking policy to obfuscate numbers into * character using functions
+SET ROLE david PASSWORD 'Gauss@123';
+
+ALTER TABLE employee ADD COLUMN salary_info TEXT;
+UPDATE employee SET salary_info = salary::text;
+CREATE OR REPLACE FUNCTION mask_regexp_salary(salary_info text) RETURNS text as
+
+$$
+ SELECT regexp_replace($1, '[0-9]+','*','g');
+$$
+LANGUAGE SQL
+STRICT SHIPPABLE;
+
+ALTER REDACTION POLICY mask_employee ON employee ADD COLUMN salary_info WITH mask_regexp_salary(salary_info);
+
+SET ROLE penny PASSWORD 'Gauss@123';
+SELECT id, name, salary_info FROM employee;
+
+
+
 -- Drop existing data masking rules
+SET ROLE david PASSWORD 'Gauss@123';
 DROP REDACTION POLICY mask_employee ON employee;
-
-
-
 
