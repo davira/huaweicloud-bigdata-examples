@@ -136,8 +136,8 @@ SET ROLE david PASSWORD 'Gauss@123';
 
 ALTER TABLE employee ADD COLUMN salary_info TEXT;
 UPDATE employee SET salary_info = salary::text;
-CREATE OR REPLACE FUNCTION mask_regexp_salary(salary_info text) RETURNS text as
 
+CREATE OR REPLACE FUNCTION mask_regexp_salary(salary_info text) RETURNS text as
 $$
  SELECT regexp_replace($1, '[0-9]+','*','g');
 $$
